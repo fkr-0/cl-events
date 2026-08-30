@@ -1,142 +1,115 @@
 # cl-events
 
-an event management system that should power a ui but got out of control
+`cl-events` is ElmTUI's reusable event/concurrency library. It has no dependency on ElmTUI and can be loaded and tested as an ordinary Common Lisp system.
 
-## Structure
+## Release status
 
-In this response, I will start with the refactoring of the project structure
-into finer-grained modules, which will allow smaller and more focused handling
-of domain-specific tasks.
+The current in-tree candidate version is **0.2.0** for both `cl-events` and
+`cl-events-tests`. This is release-candidate metadata only: the library has not
+been published to Quicklisp, Ultralisp, CLPM, or a separate source repository.
 
-1. Core event system: This module will include the core event loop and
-   infrastructure for handling events, including event queues, event
-   dispatching, and event registration.
+The qualified implementation boundary is SBCL on the repository's POSIX/Linux
+CLPM environment. Other Common Lisp implementations and non-POSIX platforms
+have not yet been qualified.
 
-```
-  core.lisp
-  queues.lisp
-  dispatcher.lisp
-  registration.lisp
-```
+## What it provides
 
-2. Event listeners and handlers: This module will deal with defining event
-   listener and handler functions, as well as managing event listener
-   registration and removal.
+- bounded channels, mailboxes, filtered channels, and registration-based select helpers;
+- explicit channel/mailbox lifecycle states plus timeout and cancellation outcomes;
+- typed event/message/command structures;
+- topic-based publish/subscribe with bounded per-subscription queues and metrics;
+- event-to-message dispatch protocols;
+- futures, promises, owned task scopes, timers, tasks, and cancellation;
+- message propagation envelopes;
+- a generic TEA-oriented application-loop shell;
+- `poll-until`, the canonical cooperative polling/deadline primitive used by ElmTUI.
 
-```
-  listeners.lisp
-  handlers.lisp
-```
+The public convenience package is `cl-events.api`; expert APIs are available from the focused `cl-events.*` packages.
 
-3. Event propagation: This module will be responsible for handling event
-   propagation, including capture, bubbling, and event delegation.
+## Lifecycle and blocking outcomes
 
-```
-  propagation.lisp
-```
+Channels and mailboxes use one drain-before-close lifecycle: `:open` -> `:closing` -> `:closed`. Closing an empty object reaches `:closed` immediately; closing one with buffered/occupied data enters `:closing` until that data is consumed. Repeated close calls are idempotent and wake blocked waiters.
 
-4. Async and threading: This module will handle all the asynchronous and
-   parallel execution aspects, including the use of cl-async, bordeaux-threads,
-   and managing event loops for different tasks.
+Blocking operations return an explicit status as a secondary value. Successful channel/mailbox operations return `:ok`; cancellation returns `:cancelled`; a finite deadline returns `:timeout`; closed receives return `:closed`; and puts rejected during drain return `:closing` or `:closed`. Filter rejection returns `:filtered`. A value of `NIL` is therefore not itself an end-of-stream marker.
 
-```
-  async.lisp
-  threads.lisp
-  event-loops.lisp
-```
+Cancellation is checked before mutating a channel or mailbox, so an already-cancelled token returns `:cancelled` without consuming or enqueueing data. A zero timeout is instead a non-blocking probe: immediately available data or a terminal channel state is observed before `:timeout`.
 
-5. Live updates and event prioritization: This module will manage live updates,
-   event prioritization, and other performance and scalability-related aspects.
+Promises transition from `:pending` to exactly one of `:resolved`, `:error`, or `:cancelled`. Async tasks transition from `:pending` through `:running` to one of `:completed`, `:error`, or `:cancelled`; a late cancellation cannot overwrite an already terminal task.
 
-```
-  live-updates.lisp
-  prioritization.lisp
-```
+### Select fairness
 
-6. Error handling and debugging:
-   This module will focus on error handling, debugging, and improving the robustness of the event system.
+`select` installs wake registrations, rescans after registration to close the lost-wakeup window, and removes every registration on completion, timeout, cancellation, or unwind. When multiple clauses are ready in the same scan, source clause order is the deterministic tie-breaker. This is intentionally **not** a round-robin or starvation-freedom guarantee; a perpetually ready earlier clause can win repeatedly, and a closed clause is a ready terminal outcome.
 
-```
-  error-handling.lisp
-  debugging.lisp
-```
+### Deadline budgets
 
-7. Utilities and macros:
-   This module will provide utility functions and macros that simplify usage of the event system when interfacing with other parts of the project.
+Finite waits use monotonic `get-internal-real-time` budgets. Nested structured-task waits carry the same budget object rather than starting a fresh timeout, and `poll-until` clamps each cooperative sleep to the remaining budget. Injectable clocks/sleeps remain the deterministic test seam.
 
-```
-  utilities.lisp
-  macros.lisp
+## Structured task ownership
+
+`make-task-scope` creates an `:open` scope. `scope-spawn` and the scoped timer helpers make workers owned by that scope; parent cancellation cascades to child scopes and tasks. `scope-join` moves the tree through `:closing`, detects errors across owned work rather than waiting sequentially behind an unrelated blocked sibling, and joins terminal worker threads. An owned error cancels/reaps siblings, records `:error`, and is re-signalled. A join timeout cancels and reaps remaining workers before returning `(NIL :TIMEOUT)`, leaving the scope `:cancelled` rather than orphaning workers. Existing `spawn-task`, `future`, `new-task`, and promise APIs remain available independently.
+
+## Event bus policy
+
+Each subscription owns a bounded channel. Duplicate subscriptions to the same topic are allowed and deliver independently in stable subscription order. `unsubscribe-handle` is idempotent in effect: the first call removes the subscription and closes its channel so blocked consumers wake; later calls report that nothing was removed.
+
+The default slow-consumer policy is `:block`, preserving backpressure by blocking the publisher until the subscriber can accept data or its channel is closed. `:drop-newest` is the bounded non-blocking alternative and increments drop counters. The default exception policy is `:continue`, which records a subscriber error and continues to later subscribers; `:signal` records and re-signals the error, aborting that publish call. `event-bus-metrics` and `subscription-metrics` expose published/delivered/dropped/error counts and active/queued state.
+
+## Runtime shutdown
+
+`run-app-loop` owns its loop as an async task. `stop-app-loop` closes the event channel, waking a blocked loop; buffered events are drained according to the channel close lifecycle. `join-app-loop` waits for the owned task. The qualified context lifecycle is one-shot: construct a fresh app context for a fresh loop run after shutdown.
+
+## Loading
+
+With ASDF on a checkout containing this directory:
+
+```lisp
+(asdf:load-system "cl-events")
 ```
 
-# Usage
+With this directory as the current directory, the local CLPM bundle is self-contained:
 
-Run from sources:
-
-    make run
-    # aka sbcl --load run.lisp
-
-choose your lisp:
-
-    LISP=ccl make run
-
-or build and run the binary:
-
-```
-$ make build
-$ ./cl-events [name]
-Hello [name] from cl-events
+```sh
+CLPM_HOME=.cache/clpm clpm bundle install
+CLPM_HOME=.cache/clpm clpm bundle exec --with-client sbcl -- \
+  --noinform --non-interactive \
+  --eval '(require :asdf)' \
+  --eval '(asdf:load-system "cl-events")'
 ```
 
-## Roswell integration
+## Example
 
-Roswell is an implementation manager and [script launcher](https://github.com/roswell/roswell/wiki/Roswell-as-a-Scripting-Environment).
-
-A POC script is in the roswell/ directory.
-
-Your users can install the script with `cbadger/cl-events`.
-
-# Dev
-
-Tests are defined with [Fiveam](https://common-lisp.net/project/fiveam/docs/).
-
-Run them from the terminal with `make test`. You should see a failing test.
-
-```bash
-$ make test
-Running test suite TESTMAIN
- Running test TEST1 f
- Did 1 check.
-    Pass: 0 ( 0%)
-    Skip: 0 ( 0%)
-    Fail: 1 (100%)
-
- Failure Details:
- --------------------------------
- TEST1 in TESTMAIN []:
-
-3
-
- evaluated to
-
-3
-
- which is not
-
-=
-
- to
-
-2
-
-Makefile:15: recipe for target 'test' failed
-
-$ echo $?
-2
+```lisp
+(let ((channel (cl-events.channel:make-channel :capacity 4)))
+  (cl-events.channel:chan-put channel :ready)
+  (cl-events.channel:chan-take channel))
+;; => :READY
 ```
 
-On Slime, load the test package and run `run!`.
+For deterministic waiting, prefer `cl-events.loop:poll-until` instead of open-coded sleep/deadline loops.
 
----
+## Testing
 
-Licence: BSD
+The test system is independent and is wired to the primary ASDF test operation:
+
+```sh
+CLPM_HOME=.cache/clpm clpm bundle exec --with-client sbcl -- \
+  --noinform --non-interactive \
+  --eval '(require :asdf)' \
+  --eval '(asdf:test-system "cl-events")'
+```
+
+The ElmTUI release gate also runs this test operation separately before loading the framework integration suite.
+
+## Dependencies
+
+Runtime: Alexandria, Bordeaux Threads, and UIOP/ASDF. FiveAM is test-only.
+
+## Versioning
+
+`cl-events` follows semantic versioning independently of ElmTUI. Because the API is pre-1.0, incompatible public API changes increment the minor version.
+
+See [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+MIT; see [LICENSE](LICENSE).

@@ -1,17 +1,25 @@
-(in-package :asdf-user)
-(defsystem "cl-events-tests"
-  :description "Test suite for the cl-events system"
-  :author "cbadger <cbadger@mail.com>"
-  :version "0.0.1"
-  :depends-on (:cl-events
-               :fiveam)
-  :license "BSD"
-  :serial t
-  :components ((:module "tests"
-                        :serial t
-                        :components ((:file "packages")
-                                     (:file "test-cl-events"))))
-
-  ;; The following would not return the right exit code on error, but still 0.
-  ;; :perform (test-op (op _) (symbol-call :fiveam :run-all-tests))
-  )
+;;; cl-events-tests.asd
+(asdf:defsystem "cl-events-tests"
+  :description "FiveAM tests for cl-events"
+  :author "ElmTUI contributors"
+  :license "MIT"
+  :version "0.2.0"
+  :depends-on (#:cl-events #:fiveam)
+  :components
+  ((:file "tests/packages")
+   (:file "tests/protocols-tests")
+   (:file "tests/types-tests")
+   (:file "tests/channel-tests")
+   (:file "tests/bus-tests")
+   (:file "tests/dispatcher-tests")
+   (:file "tests/async-tests")
+   (:file "tests/messaging-tests")
+   (:file "tests/loop-tests")
+   (:file "tests/api-tests"))
+  :perform (test-op (o c)
+             (declare (ignore o c))
+             (let ((results (uiop:symbol-call :fiveam :run :cl-events/tests)))
+               (uiop:symbol-call :fiveam :explain! results)
+               (unless (uiop:symbol-call :fiveam :results-status results)
+                 (error "The cl-events test suite failed."))
+               results)))

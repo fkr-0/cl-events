@@ -25,3 +25,18 @@
 ;; Side-effects execution. Each command type is a pluggable effect.
 (defgeneric perform-command (command app-context)
   (:documentation "Run effect; may publish events back to the bus."))
+
+;; Optional message semantics. Defaults keep primitives lightweight.
+(defgeneric message-state (message))
+(defgeneric message-priority (message))
+(defgeneric broadcast-p (message))
+(defgeneric capture-p (message))
+(defgeneric bubble-p (message))
+(defgeneric stop-propagation (message))
+
+(defmethod message-state ((message t)) nil)
+(defmethod message-priority ((message t)) nil)
+(defmethod broadcast-p ((message t)) nil)
+(defmethod capture-p ((message t)) nil)
+(defmethod bubble-p ((message t)) nil)
+(defmethod stop-propagation ((message t)) message)
