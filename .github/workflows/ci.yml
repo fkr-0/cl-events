@@ -34,7 +34,7 @@ jobs:
           tar -xzf clpm.tar.gz
           (cd clpm-0.4.1-linux-amd64 && sudo sh install.sh)
           sbcl --version
-          clpm --version
+          clpm version
       - name: Install locked CLPM dependencies
         run: clpm bundle install
       - name: Coverage gate regression tests
