@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'ci/**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: SBCL tests and coverage >=85%
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned SBCL 2.6.2 and CLPM 0.4.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y curl bzip2 ca-certificates
+          cd "$RUNNER_TEMP"
+          curl -fLsS --retry 3 -o sbcl.tar.bz2 \
+            https://downloads.sourceforge.net/project/sbcl/sbcl/2.6.2/sbcl-2.6.2-x86-64-linux-binary.tar.bz2
+          echo "1758d003f60fa166db014999a73cf9af02726ca7803ab9057dec32a92e2b6322  sbcl.tar.bz2" | sha256sum -c -
+          tar -xjf sbcl.tar.bz2
+          (cd sbcl-2.6.2-x86-64-linux && sudo sh install.sh)
+          curl -fLsS --retry 3 -o clpm.tar.gz \
+            https://files.clpm.dev/clpm/clpm-0.4.1-linux-amd64.tar.gz
+          echo "da39d9ecd1732d7062ea4c2a39ee8f43fa2213259431abd09b611c679db9e6a5f031267a9e5cd45cee2ac87f078cc7ae579dd53fe98657978c7dd37f97e87e90  clpm.tar.gz" | sha512sum -c -
+          tar -xzf clpm.tar.gz
+          (cd clpm-0.4.1-linux-amd64 && sudo sh install.sh)
+          sbcl --version
+          clpm version
+      - name: Install locked CLPM dependencies
+        run: clpm bundle install
+      - name: Coverage gate regression tests
+        run: python3 -m unittest discover -s scripts -p 'test_coverage_gate.py' -v
+      - name: Compile, test, measure and gate real coverage
+        run: bash scripts/run-coverage.sh
+      - name: Upload coverage and test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-evidence
+          path: |
+            coverage/
+          if-no-files-found: warn
+          retention-days: 30
+
+  publish-coverage:
+    name: Publish verified badge endpoint
+    needs: verify
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-evidence
+          path: evidence
+      - name: Publish measured endpoint through gh CLI
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          endpoint="$(find evidence -type f -name endpoint.json -print -quit)"
+          test -n "$endpoint"
+          python3 -m json.tool "$endpoint" > /dev/null
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/coverage-data" > /dev/null 2>&1; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/heads/coverage-data" -f sha="$GITHUB_SHA"
+          fi
+          args=(-f "branch=coverage-data" -f "message=chore: update verified coverage badge for $GITHUB_SHA" \
+                -f "content=$(base64 -w0 "$endpoint")")
+          previous="$(gh api "repos/$GITHUB_REPOSITORY/contents/coverage.json?ref=coverage-data" --jq .sha 2>/dev/null || true)"
+          if [[ -n "$previous" ]]; then
+            args+=(-f "sha=$previous")
+          fi
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/coverage.json" "${args[@]}"

@@ -20,3 +20,19 @@
   (is (typep (fdefinition 'cl-events.protocols:capture-p) 'generic-function))
   (is (typep (fdefinition 'cl-events.protocols:bubble-p) 'generic-function))
   (is (typep (fdefinition 'cl-events.protocols:stop-propagation) 'generic-function)))
+
+(test primitive-message-semantics-default-to-inert
+  (dolist (message (list nil 42 :token "text"))
+    (is (null (cl-events.protocols:message-state message)))
+    (is (null (cl-events.protocols:message-priority message)))
+    (is-false (cl-events.protocols:broadcast-p message))
+    (is-false (cl-events.protocols:capture-p message))
+    (is-false (cl-events.protocols:bubble-p message))
+    (is (eq message (cl-events.protocols:stop-propagation message)))))
+
+(test default-message-metadata-and-phase
+  (let ((message (make-message :type :noop :data nil)))
+    (is (null (cl-events.protocols:message-state message)))
+    (is (null (cl-events.protocols:message-priority message)))
+    (is (equal '(:target)
+               (cl-events.messaging:message-phases message)))))

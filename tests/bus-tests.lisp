@@ -127,3 +127,96 @@
     (is (= 1 (getf (cl-events.bus:event-bus-metrics bus) :errors)))
     (is (= 1 (getf (cl-events.bus:subscription-metrics handle) :errors)))
     (is-true (cl-events.bus:unsubscribe-handle handle))))
+
+(test event-bus-rejects-invalid-configuration-and-topics
+  (signals type-error (make-event-bus :subscriber-capacity 0))
+  (signals error (make-event-bus :overflow-policy :overwrite))
+  (signals error (make-event-bus :exception-policy :silence))
+  (let ((bus (make-event-bus)))
+    (dolist (topic (list nil "" 17))
+      (signals error (cl-events.bus:subscribe-handle bus topic)))
+    (signals type-error
+      (cl-events.bus:subscribe-handle bus :valid :capacity 0))
+    (signals error
+      (cl-events.bus:subscribe-handle bus :valid :overflow-policy :overwrite))
+    (signals error
+      (publish-event bus (make-test-event :topic nil :payload :bad)))
+    (is (= 0 (getf (cl-events.bus:event-bus-metrics bus) :published)))
+    (is (= 0 (getf (cl-events.bus:event-bus-metrics bus)
+                    :active-subscriptions)))))
+
+(test event-bus-publishes-to-zero-listeners-and-accepts-symbol-or-string-topics
+  (let ((bus (make-event-bus)))
+    (is-true (publish-event bus
+                 (make-test-event :topic "updates" :payload 7)))
+    (let ((string-handle (cl-events.bus:subscribe-handle bus "updates"))
+          (symbol-handle (cl-events.bus:subscribe-handle bus 'updates)))
+      (is-true (publish-event bus
+                   (make-test-event :topic "updates" :payload 8)))
+      (is-true (publish-event bus
+                   (make-test-event :topic 'updates :payload 9)))
+      (is (= 3 (getf (cl-events.bus:event-bus-metrics bus) :published)))
+      (is (= 2 (getf (cl-events.bus:event-bus-metrics bus) :delivered)))
+      (is (eq :ok (nth-value 1
+                   (chan-take (cl-events.bus:subscription-channel string-handle)
+                              :timeout 0))))
+      (is (eq :ok (nth-value 1
+                   (chan-take (cl-events.bus:subscription-channel symbol-handle)
+                              :timeout 0))))
+      (is-true (cl-events.bus:unsubscribe-handle string-handle))
+      (is-true (cl-events.bus:unsubscribe-handle symbol-handle)))))
+
+(test cleanup-closed-subscriptions-removes-only-closed-handles
+  (let* ((bus (make-event-bus))
+         (closed (cl-events.bus:subscribe-handle bus :topic))
+         (live (cl-events.bus:subscribe-handle bus :topic)))
+    (chan-close (cl-events.bus:subscription-channel closed))
+    (is (= 1 (cl-events.bus::cleanup-closed-subscriptions bus)))
+    (is (= 0 (cl-events.bus::cleanup-closed-subscriptions bus)))
+    (is-false (cl-events.bus:subscription-active-p closed))
+    (is-true (cl-events.bus:subscription-active-p live))
+    (is (= 1 (getf (cl-events.bus:event-bus-metrics bus)
+                    :active-subscriptions)))
+    (is-true (cl-events.bus:unsubscribe-handle live))))
+
+(test subscription-policy-override-is-per-handle
+  (let* ((bus (make-event-bus :subscriber-capacity 3
+                              :overflow-policy :block))
+         (handle (cl-events.bus:subscribe-handle bus :topic
+                                                 :capacity 1
+                                                 :overflow-policy :drop-newest))
+         (first (make-test-event :topic :topic :payload :one))
+         (second (make-test-event :topic :topic :payload :two)))
+    (is-true (publish-event bus first))
+    (is-true (publish-event bus second))
+    (is (eq :drop-newest
+            (getf (cl-events.bus:subscription-metrics handle)
+                  :overflow-policy)))
+    (is (= 1 (getf (cl-events.bus:subscription-metrics handle) :dropped)))
+    (is (eq first (chan-take (cl-events.bus:subscription-channel handle)
+                             :timeout 0)))
+    (is-true (cl-events.bus:unsubscribe-handle handle))))
+
+(test unsubscribe-unknown-channel-does-not-disrupt-active-subscription
+  (let* ((bus (make-event-bus))
+         (handle (cl-events.bus:subscribe-handle bus :topic))
+         (other (make-channel :capacity 1)))
+    (is-false (unsubscribe bus :topic other))
+    (is-false (unsubscribe bus :missing
+                           (cl-events.bus:subscription-channel handle)))
+    (is-true (cl-events.bus:subscription-active-p handle))
+    (is-true (unsubscribe bus :topic
+                          (cl-events.bus:subscription-channel handle)))
+    (is-false (unsubscribe bus :topic
+                           (cl-events.bus:subscription-channel handle)))))
+
+(test with-subscription-unsubscribes-on-nonlocal-exit
+  (let ((bus (make-event-bus))
+        (captured nil))
+    (signals error
+      (with-subscription (ch bus :topic)
+        (setf captured ch)
+        (error "abort subscriber")))
+    (is (eq :closed (cl-events.channel:channel-state captured)))
+    (is (= 0 (getf (cl-events.bus:event-bus-metrics bus)
+                    :active-subscriptions)))))

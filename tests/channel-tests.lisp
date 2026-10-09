@@ -393,3 +393,74 @@
         (is (eq :buffered value))
         (is (eq :ok status)))
       (is (eq :closed (cl-events.channel:channel-state ch))))))
+
+;;; Lifecycle and deadline primitives are exercised beside channel cancellation.
+(def-suite :cl-events/lifecycle :in :cl-events/tests)
+(in-suite :cl-events/lifecycle)
+
+(test deadline-budgets-honor-one-clock-and-expiration
+  (let ((now 100))
+    (let ((unbounded (cl-events.lifecycle:make-deadline-budget
+                      nil :now-fn (lambda () now)))
+          (finite (cl-events.lifecycle:make-deadline-budget
+                   1 :now-fn (lambda () now))))
+      (is-false (cl-events.lifecycle:deadline-budget-expired-p unbounded))
+      (is (null (cl-events.lifecycle:deadline-budget-remaining-seconds
+                 unbounded)))
+      (is-false (cl-events.lifecycle:deadline-budget-expired-p finite))
+      (is (< 0d0 (cl-events.lifecycle:deadline-budget-remaining-seconds
+                  finite)))
+      (incf now internal-time-units-per-second)
+      (is-true (cl-events.lifecycle:deadline-budget-expired-p finite))
+      (is (zerop (cl-events.lifecycle:deadline-budget-remaining-seconds
+                  finite)))
+      (incf now internal-time-units-per-second)
+      (is (zerop (cl-events.lifecycle:deadline-budget-remaining-seconds
+                  finite))))))
+
+(test deadline-zero-timeout-and-invalid-input
+  (let ((budget (cl-events.lifecycle:make-deadline-budget
+                 0 :now-fn (lambda () 7))))
+    (is-true (cl-events.lifecycle:deadline-budget-expired-p budget))
+    (is (zerop (cl-events.lifecycle:deadline-budget-remaining-seconds
+                budget))))
+  (signals type-error (cl-events.lifecycle:make-deadline-budget -1))
+  (signals type-error (cl-events.lifecycle:make-deadline-budget 1
+                         :now-fn :not-a-function)))
+
+(test cancellation-listener-unregister-and-repeat-cancel
+  (let ((token (cl-events.lifecycle:make-cancellation-token))
+        (observed nil))
+    (let ((first (cl-events.lifecycle::register-cancellation-listener
+                  token (lambda () (push :first observed))))
+          (removed (cl-events.lifecycle::register-cancellation-listener
+                    token (lambda () (push :removed observed)))))
+      (is-true (cl-events.lifecycle::unregister-cancellation-listener removed))
+      (is-true (cl-events.lifecycle::unregister-cancellation-listener removed))
+      (is-false (cl-events.lifecycle:cancellation-requested-p token))
+      (is (eq :cancelled
+              (cl-events.lifecycle:request-cancellation token :shutdown)))
+      (is-true (cl-events.lifecycle:cancellation-requested-p token))
+      (is (eq :shutdown (cl-events.lifecycle:cancellation-reason token)))
+      (is (equal '(:first) observed))
+      (is (eq :cancelled
+              (cl-events.lifecycle:request-cancellation token :later)))
+      (is (eq :shutdown (cl-events.lifecycle:cancellation-reason token)))
+      (is (equal '(:first) observed))
+      (is-true (cl-events.lifecycle::unregister-cancellation-listener first))
+      (cl-events.lifecycle::register-cancellation-listener
+       token (lambda () (push :immediate observed)))
+      (is (equal '(:immediate :first) observed)))))
+
+(test cancellation-listener-order-and-type-validation
+  (let ((token (cl-events.lifecycle:make-cancellation-token))
+        (called nil))
+    (signals type-error
+      (cl-events.lifecycle::register-cancellation-listener token 12))
+    (dolist (marker '(:first :second :third))
+      (let ((value marker))
+        (cl-events.lifecycle::register-cancellation-listener
+         token (lambda () (push value called)))))
+    (cl-events.lifecycle:request-cancellation token)
+    (is (equal '(:first :second :third) (nreverse called)))
+    (is (null (cl-events.lifecycle:cancellation-reason token)))))

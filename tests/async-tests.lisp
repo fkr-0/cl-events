@@ -294,3 +294,106 @@
       (when join-thread
         (ignore-errors (bt:join-thread join-thread)))
       (setf (symbol-function cleanup-symbol) original-cleanup))))
+
+(test promise-await-zero-timeout-does-not-settle-it
+  (let ((promise (cl-events.async:make-promise)))
+    (multiple-value-bind (value status) (cl-events.async:await promise 0)
+      (is (null value))
+      (is (eq :timeout status)))
+    (is (eq :pending (cl-events.async:promise-state promise)))
+    (multiple-value-bind (value status)
+        (cl-events.async:resolve-promise promise 19)
+      (is (= 19 value))
+      (is (eq :resolved status)))
+    (multiple-value-bind (value status) (cl-events.async:await promise 0)
+      (is (= 19 value))
+      (is (eq :resolved status)))))
+
+(test promise-resolution-is-first-writer-wins
+  (let ((promise (cl-events.async:make-promise)))
+    (cl-events.async:resolve-promise promise :initial)
+    (multiple-value-bind (value status)
+        (cl-events.async:resolve-promise promise :late)
+      (is (eq :initial value))
+      (is (eq :resolved status)))
+    (multiple-value-bind (ok status)
+        (cl-events.async:promise-cancel promise)
+      (is-false ok)
+      (is (eq :resolved status)))
+    (is-true (cl-events.async:promise-resolved promise))
+    (is-false (cl-events.async:promise-cancelled-p promise))
+    (is (eq :initial (cl-events.async:promise-value promise)))))
+
+(test rejecting-promise-preserves-error-and-rejects-late-resolution
+  (let* ((promise (cl-events.async:make-promise))
+         (condition (make-condition 'simple-error
+                                    :format-control "expected rejection"
+                                    :format-arguments nil)))
+    (multiple-value-bind (value status)
+        (cl-events.async:reject-promise promise condition)
+      (is (null value))
+      (is (eq :error status)))
+    (is (eq :error (cl-events.async:promise-state promise)))
+    (is (eq condition (cl-events.async:promise-error promise)))
+    (signals simple-error (cl-events.async:await promise 0))
+    (is (eq :error (nth-value 1
+                    (cl-events.async:resolve-promise promise :too-late))))
+    (is (eq :error (nth-value 1
+                    (cl-events.async:reject-promise promise condition))))))
+
+(test cancel-pending-async-task-is-terminal-and-rejects-reexecution
+  (let ((task (cl-events.async:new-task (lambda () :should-not-run))))
+    (multiple-value-bind (ok status) (cancel task)
+      (is-true ok)
+      (is (eq :cancelled status)))
+    (is (eq :cancelled (cl-events.async:async-task-status task)))
+    (is-true (cl-events.async:async-task-finished-p task))
+    (is (eq :cancelled
+            (nth-value 1 (cl-events.async:await task 0))))
+    (cl-events.async:async-exec task)
+    (is (null (cl-events.async::async-task-thread task)))
+    (is (eq :cancelled (cl-events.async:async-task-status task)))
+    (is (eq :cancelled (nth-value 1 (cancel task))))))
+
+(test failing-async-task-propagates-promise-error
+  (let ((task (cl-events.async:new-task
+               (lambda () (error "task-test-failure")))))
+    (cl-events.async:async-exec task "test-error-task")
+    (signals simple-error (cl-events.async:await task 1))
+    (is (eq :error (cl-events.async:async-task-status task)))
+    (is-true (cl-events.async:async-task-finished-p task))
+    (is (typep (cl-events.async:async-task-error task) 'simple-error))
+    (is (eq :error (nth-value 1 (cancel task))))))
+
+(test async-combinator-empty-all-and-cancelled-source
+  (multiple-value-bind (values status)
+      (cl-events.async:await (cl-events.async:all nil) 1)
+    (is (null values))
+    (is (eq :resolved status)))
+  (let ((source (cl-events.async:make-promise)))
+    (cl-events.async:promise-cancel source)
+    (multiple-value-bind (value status)
+        (cl-events.async:await (cl-events.async:all (list source)) 1)
+      (is (null value))
+      (is (eq :cancelled status)))))
+
+(test async-chain-propagates-cancellation-and-callback-errors
+  (let ((source (cl-events.async:make-promise)))
+    (let ((chained (cl-events.async:chain source #'identity)))
+      (cl-events.async:promise-cancel source)
+      (is (eq :cancelled (nth-value 1
+                          (cl-events.async:await chained 1))))))
+  (let ((source (cl-events.async:make-promise)))
+    (let ((chained (cl-events.async:chain source
+                    (lambda (_value)
+                      (declare (ignore _value))
+                      (error "chain callback failure")))))
+      (cl-events.async:resolve-promise source :ready)
+      (signals simple-error (cl-events.async:await chained 1)))))
+
+(test async-invalid-combinator-input-and-unsupported-cancel
+  (signals error (cl-events.async:chain :bad #'identity))
+  (signals error (cl-events.async:race (list :bad)))
+  (multiple-value-bind (ok status) (cancel :bad)
+    (is (null ok))
+    (is (eq :unsupported status))))
