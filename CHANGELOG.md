@@ -4,8 +4,13 @@ All notable changes to `cl-events` are recorded here. The library follows semant
 
 ## Unreleased
 
-Candidate version: **0.2.0**. This remains an in-tree candidate and is not a
-registry publication or separate-repository release.
+No changes recorded since version 0.2.0.
+
+## 0.2.0 — 2026-10-09
+
+GitHub source release; no Quicklisp, Ultralisp or public CLPM registry publication.
+CI qualification uses SBCL 2.6.2, the independent FiveAM test system, and
+a measured 85% minimum on instrumented runtime executable lines.
 
 ### Added
 

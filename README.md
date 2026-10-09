@@ -8,9 +8,11 @@
 ## Release status
 
 The source repository is [fkr-0/cl-events](https://github.com/fkr-0/cl-events).
-The current in-tree candidate version is **0.2.0** for both `cl-events` and
-`cl-events-tests`. This is release-candidate metadata only: a tagged GitHub
-release or distribution through Quicklisp, Ultralisp or CLPM is not implied.
+The current source version is **0.2.0** for both `cl-events` and
+`cl-events-tests`. See [GitHub Releases](https://github.com/fkr-0/cl-events/releases)
+for release artifacts and exact tag availability. Installation is supported
+from this Git repository and its local CLPM bundle; registration with
+Quicklisp, Ultralisp or a public CLPM package index is **not** claimed.
 
 The qualified implementation boundary is SBCL on the repository's POSIX/Linux
 CLPM environment. Other Common Lisp implementations and non-POSIX platforms
