@@ -1,12 +1,16 @@
 # cl-events
 
+[![CI](https://github.com/fkr-0/cl-events/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/fkr-0/cl-events/actions/workflows/ci.yml)
+[![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ffkr-0%2Fcl-events%2Fcoverage-data%2Fcoverage.json)](https://github.com/fkr-0/cl-events/actions/workflows/ci.yml)
+
 `cl-events` is ElmTUI's reusable event/concurrency library. It has no dependency on ElmTUI and can be loaded and tested as an ordinary Common Lisp system.
 
 ## Release status
 
+The source repository is [fkr-0/cl-events](https://github.com/fkr-0/cl-events).
 The current in-tree candidate version is **0.2.0** for both `cl-events` and
-`cl-events-tests`. This is release-candidate metadata only: the library has not
-been published to Quicklisp, Ultralisp, CLPM, or a separate source repository.
+`cl-events-tests`. This is release-candidate metadata only: a tagged GitHub
+release or distribution through Quicklisp, Ultralisp or CLPM is not implied.
 
 The qualified implementation boundary is SBCL on the repository's POSIX/Linux
 CLPM environment. Other Common Lisp implementations and non-POSIX platforms
@@ -99,6 +103,29 @@ CLPM_HOME=.cache/clpm clpm bundle exec --with-client sbcl -- \
 ```
 
 The ElmTUI release gate also runs this test operation separately before loading the framework integration suite.
+
+### Measured line coverage (CI gate)
+
+Run `bash scripts/run-coverage.sh` after `clpm bundle install` on SBCL 2.6.0 or
+later. This recompiles production and test systems with SB-COVER enabled,
+executes the entire FiveAM suite, and emits `coverage/coverage.lcov`,
+`coverage/html/`, `coverage/summary.json` and (only when the gate passes)
+`coverage/endpoint.json`. The CI job fails below **85%** of eligible runtime
+instrumented executable lines; missing modules, empty denominators and malformed
+coverage fail closed. See the detailed per-file counts in `coverage/summary.json`.
+
+**Denominator:** LCOV `DA` executable lines across every `.lisp` module in
+`src/events/`, except `packages.lisp` (only UIOP package definitions) and
+`api.lisp` (only an `in-package` re-export marker). Neither contains runtime
+implementation to exercise. These two exact exclusions are declared in
+`scripts/coverage_gate.py`; source files cannot silently disappear from the
+coverage inventory. Tests and third-party code are never in this denominator.
+
+The coverage badge is generated from a measured, successful `main` CI run and
+published as `coverage.json` on the `coverage-data` branch using the GitHub CLI.
+Before the first successful main run, the badge endpoint may be unavailable;
+there is deliberately no invented fallback percentage. Coverage HTML, LCOV and
+the machine-readable summary are uploaded with each CI workflow run.
 
 ## Dependencies
 

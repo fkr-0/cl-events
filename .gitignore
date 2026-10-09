@@ -1,0 +1,5 @@
+# CI/instrumentation artifacts are derived, never release sources.
+/coverage/
+/.cache/
+__pycache__/
+*.pyc
