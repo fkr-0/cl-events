@@ -10,6 +10,7 @@
    (:file "tests/protocols-tests")
    (:file "tests/types-tests")
    (:file "tests/channel-tests")
+   (:file "tests/lifecycle-tests")
    (:file "tests/bus-tests")
    (:file "tests/dispatcher-tests")
    (:file "tests/async-tests")

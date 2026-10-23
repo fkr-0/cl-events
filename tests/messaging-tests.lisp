@@ -69,6 +69,43 @@
     (is-false (cl-events.messaging:message-envelope-broadcast-p envelope)))
   (is (null (cl-events.messaging:envelope->messages nil))))
 
+
+(defstruct capture-only-coverage-message)
+(defstruct bubble-only-coverage-message)
+
+(defmethod cl-events.protocols:capture-p ((message capture-only-coverage-message))
+  (declare (ignore message))
+  t)
+
+(defmethod cl-events.protocols:bubble-p ((message bubble-only-coverage-message))
+  (declare (ignore message))
+  t)
+
+(test independent-capture-and-bubble-phase-order
+  (dolist (case (list (cons (make-capture-only-coverage-message)
+                           '(:capture :target))
+                      (cons (make-bubble-only-coverage-message)
+                           '(:target :bubble))))
+    (let* ((message (car case))
+           (envelopes (cl-events.messaging:expand-message message)))
+      (is (equal (cdr case)
+                 (mapcar #'cl-events.messaging:message-envelope-phase envelopes)))
+      (is (every (lambda (envelope)
+                   (eq message (cl-events.messaging:message-envelope-message envelope)))
+                 envelopes))
+      (is (equal (make-list (length envelopes) :initial-element message)
+                 (cl-events.messaging:envelope->messages envelopes))))))
+
+(test explicit-envelope-preserves-nil-and-unrelated-phase
+  (let* ((message (make-message :type :noop))
+         (envelope (cl-events.messaging:message->envelope
+                    message :phase :diagnostic :stop-p nil)))
+    (is (eq :diagnostic (cl-events.messaging:message-envelope-phase envelope)))
+    (is-false (cl-events.messaging:message-envelope-stop-p envelope))
+    (is-false (cl-events.messaging:message-envelope-broadcast-p envelope))
+    (is-false (cl-events.messaging:message-envelope-capture-p envelope))
+    (is-false (cl-events.messaging:message-envelope-bubble-p envelope))))
+
 (test broadcast-phase-excludes-capture-target-and-bubble
   (let* ((message (make-broadcast-msg :value :notification))
          (envelope (first (cl-events.messaging:expand-message message))))

@@ -109,6 +109,40 @@
        (cl-events.types:focus-event
         (cl-events.types:focus-event-consumed-p event))))))
 
+
+(test input-event-metadata-roundtrips-and-consumption-idempotence
+  (let ((ui (make-ui-event :type :custom :target :pane :timestamp 11
+                           :original-event :native))
+        (key (make-key-event :type :key-up :key :enter :code 13
+                             :char #\Newline :modifiers '(:shift)
+                             :timestamp 12))
+        (mouse (make-mouse-event :type :scroll :x -4 :y 15
+                                 :button :middle :modifiers '(:ctrl)
+                                 :click-count 2 :delta-x -1 :delta-y 3
+                                 :timestamp 13))
+        (focus (make-focus-event :type :focus-out :target :field
+                                 :source :pointer :timestamp 14)))
+    (is (eq :native (cl-events.types:ui-event-original-event ui)))
+    (is (= 11 (ui-event-timestamp ui)))
+    (is (eq :key-up (key-event-type key)))
+    (is (= 12 (cl-events.types:key-event-timestamp key)))
+    (is (eq :scroll (mouse-event-type mouse)))
+    (is (= -1 (cl-events.types:mouse-event-delta-x mouse)))
+    (is (= 3 (cl-events.types:mouse-event-delta-y mouse)))
+    (is (= 2 (cl-events.types:mouse-event-click-count mouse)))
+    (is (= 13 (cl-events.types:mouse-event-timestamp mouse)))
+    (is (eq :focus-out (focus-event-type focus)))
+    (is (eq :pointer (cl-events.types:focus-event-source focus)))
+    (is (= 14 (cl-events.types:focus-event-timestamp focus)))
+    (dolist (item (list ui key mouse focus))
+      (is (eq item (cl-events.protocols:stop-propagation item)))
+      (is (eq item (cl-events.types:consume-event item)))
+      (is (eq item (cl-events.types:prevent-default item))))))
+
+(test consume-event-rejects-unrecognized-input
+  (signals type-error (cl-events.types:consume-event nil))
+  (signals type-error (cl-events.types:consume-event :unknown)))
+
 (test event-modifier-detection-only-checks-key-and-mouse
   (let ((key (make-key-event :modifiers '(:control :shift)))
         (mouse (make-mouse-event :modifiers '(:alt)))
