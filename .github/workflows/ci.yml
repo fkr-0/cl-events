@@ -15,7 +15,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install pinned SBCL 2.6.2 and CLPM 0.4.1
         shell: bash
         run: |
@@ -43,7 +43,7 @@ jobs:
         run: bash scripts/run-coverage.sh
       - name: Upload coverage and test evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-evidence
           path: |
@@ -59,7 +59,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: coverage-evidence
           path: evidence
