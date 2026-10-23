@@ -24,4 +24,29 @@
 
 (defun unregister-cancellation-listener (registration) "Remove REGISTRATION if it is still active. This operation is idempotent." (let ((token (cancellation-registration-token registration))) (bt:with-lock-held ((cancellation-token-lock token)) (when (cancellation-registration-active-p registration) (setf (cancellation-token-listeners token) (delete registration (cancellation-token-listeners token) :test #'eq)) (setf (cancellation-registration-active-p registration) nil)))) t)
 
-(defun request-cancellation (token &optional reason) "Cancel TOKEN once, wake its waiters, and return the resulting lifecycle state." (let ((listeners nil)) (bt:with-lock-held ((cancellation-token-lock token)) (unless (cancellation-token-cancelled-p token) (setf (cancellation-token-cancelled-p token) t (cancellation-token-reason token) reason listeners (nreverse (cancellation-token-listeners token)) (cancellation-token-listeners token) nil) (dolist (registration listeners) (setf (cancellation-registration-active-p registration) nil)) (broadcast-condition (cancellation-token-condition token)))) (dolist (registration listeners) (funcall (cancellation-registration-listener registration))) :cancelled))
+(defun request-cancellation (token &optional reason)
+  "Cancel TOKEN once, wake its waiters, and return the resulting lifecycle state.
+Every listener is notified, even if a preceding listener signals an error.
+Re-signal the first callback error after all cleanup listeners have run."
+  (let ((listeners nil))
+    (bt:with-lock-held ((cancellation-token-lock token))
+      (unless (cancellation-token-cancelled-p token)
+        (setf (cancellation-token-cancelled-p token) t
+              (cancellation-token-reason token) reason
+              listeners (nreverse (cancellation-token-listeners token))
+              (cancellation-token-listeners token) nil)
+        (dolist (registration listeners)
+          (setf (cancellation-registration-active-p registration) nil))
+        (broadcast-condition (cancellation-token-condition token))))
+    ;; Callbacks execute without the token lock.  A failing callback must not
+    ;; strand later listeners responsible for waking channel/select waiters.
+    (let ((first-error nil))
+      (dolist (registration listeners)
+        (handler-case
+            (funcall (cancellation-registration-listener registration))
+          (error (condition)
+            (unless first-error
+              (setf first-error condition)))))
+      (when first-error
+        (error first-error)))
+    :cancelled))
