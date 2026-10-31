@@ -168,6 +168,24 @@
     (bt:with-lock-held ((cl-events.channel::channel-lock ch))
       (is (null (cl-events.channel::channel-select-waiters ch))))))
 
+(test select-cancellation-registration-error-unwinds-waiters
+  ;; Failure after channel registration must not retain a stale select waiter.
+  (let* ((ch (make-channel))
+         (token (cl-events.lifecycle:make-cancellation-token))
+         (name 'cl-events.lifecycle::register-cancellation-listener)
+         (original (symbol-function name)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function name)
+                 (lambda (&rest args)
+                   (declare (ignore args))
+                   (error "Injected registration failure")))
+           (signals error
+             (cl-events.channel::select-operations
+              (list (list :take ch)) :cancel-token token))
+           (is (null (cl-events.channel::channel-select-waiters ch))))
+      (setf (symbol-function name) original))))
+
 (test select-timeout-is-distinct-from-closed
   (let ((open-ch (make-channel :capacity 1))
         (closed-ch (make-channel :capacity 1)))

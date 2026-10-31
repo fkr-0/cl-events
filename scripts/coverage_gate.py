@@ -59,6 +59,8 @@ def main():
     p.add_argument("--out", type=Path, default=Path("coverage"))
     p.add_argument("--threshold", type=int, default=85)
     args = p.parse_args()
+    # A failed or invalid measurement must not retain an earlier passing badge.
+    (args.out / 'endpoint.json').unlink(missing_ok=True)
     try:
         if not 0 <= args.threshold <= 100:
             raise ValueError("Invalid threshold")

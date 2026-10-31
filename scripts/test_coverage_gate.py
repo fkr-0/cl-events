@@ -2,7 +2,9 @@
 import tempfile
 import unittest
 from pathlib import Path
-from coverage_gate import analyze
+from coverage_gate import analyze, main
+from unittest.mock import patch
+import json
 
 
 class CoverageGateTests(unittest.TestCase):
@@ -34,6 +36,31 @@ class CoverageGateTests(unittest.TestCase):
         self.fixture(("async.lisp", "async.lisp", "loop.lisp"))
         with self.assertRaisesRegex(ValueError, "Duplicate"):
             analyze(self.lcov, self.src)
+
+    def test_missing_da_count_fails_closed(self):
+        self.fixture()
+        self.lcov.write_text(self.lcov.read_text().replace('DA:2,0', 'DA:2,', 1))
+        with self.assertRaises(ValueError):
+            analyze(self.lcov, self.src)
+
+    def test_negative_da_count_fails_closed(self):
+        self.fixture()
+        self.lcov.write_text(self.lcov.read_text().replace('DA:2,0', 'DA:2,-1', 1))
+        with self.assertRaises(ValueError):
+            analyze(self.lcov, self.src)
+
+    def test_failure_removes_previous_passing_endpoint(self):
+        self.fixture()
+        output = self.root / 'coverage'
+        output.mkdir()
+        endpoint = output / 'endpoint.json'
+        endpoint.write_text('{"message":"100%"}')
+        with patch('sys.argv', ['coverage_gate.py', '--lcov', str(self.lcov),
+                                '--source', str(self.src), '--out', str(output),
+                                '--threshold', '90']):
+            self.assertEqual(main(), 1)
+        self.assertFalse(endpoint.exists())
+        self.assertFalse(json.loads((output / 'summary.json').read_text())['passed'])
 
 
 if __name__ == "__main__":

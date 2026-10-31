@@ -257,18 +257,19 @@
       (multiple-value-bind (ready-p data source status) (scan)
         (when ready-p (return-from select-operations (values data source status))))
       (%select-register-waiter channels waiter)
-      (when cancel-token
-        (setf registration
-              (cl-events.lifecycle::register-cancellation-listener
-               cancel-token (lambda () (%wake-select-waiter waiter)))))
       (unwind-protect
-           (loop
+           (progn
+             (when cancel-token
+               (setf registration
+                     (cl-events.lifecycle::register-cancellation-listener
+                      cancel-token (lambda () (%wake-select-waiter waiter)))))
+             (loop
              (when (cancelled-p) (return (values nil nil :cancelled)))
              (multiple-value-bind (ready-p data source status) (scan)
                (when ready-p (return (values data source status))))
              (when (and budget (deadline-budget-expired-p budget))
                (return (values nil nil :timeout)))
-             (%wait-select-waiter waiter budget))
+             (%wait-select-waiter waiter budget)))
         (%select-unregister-waiter channels waiter)
         (%unregister-cancellation registration)))))
 
